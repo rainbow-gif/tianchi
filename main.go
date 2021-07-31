@@ -2,14 +2,86 @@ package main
 
 import (
 	_ "example.com/m/docs" // 千万不要忘了导入把你上一步生成的docs
+	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/go-basic/uuid"
-	"log"
-	"net/http"
-
+	_ "github.com/go-sql-driver/mysql"
 	gs "github.com/swaggo/gin-swagger"
 	"github.com/swaggo/gin-swagger/swaggerFiles"
+	"io/ioutil"
+	"log"
+	"net/http"
+	"os"
+	"strconv"
+
+	//"xorm.io/xorm"
+
+	//"time"
+	"database/sql"
+	//"xorm.io/xorm"
 )
+var sqlDb *sql.DB           //数据库连接db
+var sqlResponse SqlResponse //响应client的数据
+type creatroom struct {
+	Id      int64     `xorm:"pk autoincr" json:"id"` //指定主键并自增
+	Name    string    `json:"name"`
+	//Thisroomuser map[string]string
+
+}
+//定义结构体(xorm支持双向映射)；没有表，会进行创建
+type creatuser struct {
+	Id      int64     `xorm:"pk autoincr" json:"id"` //指定主键并自增
+	Username 	string    `json:"username"`
+	FirstName 	string    `json:"firstName"`
+	LastName 	string    `json:"lastName"`
+	Email 		string    `json:"email"`
+	Password 	string    `json:"password"`
+	Phone 		string    `json:"phone"`
+	Roomid		string
+	//StuNum  string    `xorm:"unique" json:"stu_num"`
+	//Name    string    `json:"name"`
+	//Age     int       `json:"age"`
+	//Created time.Time `xorm:"created" json:"created"`
+	//Updated time.Time `xorm:"updated" json:"updated"`
+
+}
+
+//应答体
+type SqlResponse struct {
+	Code    int         `json:"code"`
+	Message string      `json:"message"`
+	Data    interface{} `json:"data"`
+}
+func init() {
+	//1、打开数据库
+	//parseTime:时间格式转换(查询结果为时间时，是否自动解析为时间);
+	// loc=Local：MySQL的时区设置
+	sqlStr := "root:123456@tcp(127.0.0.1:3306)/xorm?charset=utf8&parseTime=true&loc=Local"
+	var err error
+	sqlDb, err = sql.Open("mysql", sqlStr)
+	if err != nil {
+		fmt.Println("数据库打开出现了问题：", err)
+		return
+	}
+	//2、 测试与数据库建立的连接（校验连接是否正确）
+	err = sqlDb.Ping()
+	if err != nil {
+		fmt.Println("数据库连接出现了问题：", err)
+		return
+	}
+	file, err := os.Open("room.sql")
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+	content, err := ioutil.ReadAll(file)
+	_, err = sqlDb.Exec(string(content))
+	if err != nil {
+		return
+	}
+
+}
+
 
 type roomDTO struct {
 	name string
@@ -31,8 +103,20 @@ func room(c *gin.Context) {
 		return 
 	}
 	roomname := json["name"]
+
 	log.Printf("%v",&json)
-	c.String(http.StatusOK, "response is room id string " + roomname)
+	sqlStr := "insert into room(Name) values (?)"
+	ret, err := sqlDb.Exec(sqlStr, roomname)
+	if err != nil{
+		fmt.Printf("insert failed, err:%v\n", err)
+		sqlResponse.Code = http.StatusBadRequest
+		sqlResponse.Message = "写入失败"
+		sqlResponse.Data = err
+		c.JSON(http.StatusOK, sqlResponse)
+		return
+	}
+	id, err := ret.LastInsertId()
+	c.String(http.StatusOK, strconv.FormatInt(id, 10))
 
 
 }
