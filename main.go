@@ -1,6 +1,7 @@
 package main
 
 import (
+	"container/list"
 	_ "example.com/m/docs" // 千万不要忘了导入把你上一步生成的docs
 	"fmt"
 	"github.com/gin-gonic/gin"
@@ -13,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
 	//"xorm.io/xorm"
 
@@ -22,30 +24,41 @@ import (
 )
 var sqlDb *sql.DB           //数据库连接db
 var sqlResponse SqlResponse //响应client的数据
-type creatroom struct {
-	Id      int64     `xorm:"pk autoincr" json:"id"` //指定主键并自增
-	Name    string    `json:"name"`
-	//Thisroomuser map[string]string
-
+var session map[string]user
+var visit map[int]string
+//type creatroom struct {
+//	Id      int64     `xorm:"pk autoincr" json:"id"` //指定主键并自增
+//	Name    string    `json:"name"`
+//	//Thisroomuser map[string]string
+//
+//}
+////定义结构体(xorm支持双向映射)；没有表，会进行创建
+//type creatuser struct {
+//	Id      int64     `xorm:"pk autoincr" json:"id"` //指定主键并自增
+//	Username 	string    `json:"username"`
+//	FirstName 	string    `json:"firstName"`
+//	LastName 	string    `json:"lastName"`
+//	Email 		string    `json:"email"`
+//	Password 	string    `json:"password"`
+//	Phone 		string    `json:"phone"`
+//	Roomid		string
+//	//StuNum  string    `xorm:"unique" json:"stu_num"`
+//	//Name    string    `json:"name"`
+//	//Age     int       `json:"age"`
+//	//Created time.Time `xorm:"created" json:"created"`
+//	//Updated time.Time `xorm:"updated" json:"updated"`
+//
+//}
+type user struct {
+		Id      int
+		Username 	string
+		FirstName 	string
+		LastName 	string
+		Email 		string
+		Password 	string
+		Phone 		string
+		Roomid		interface{}
 }
-//定义结构体(xorm支持双向映射)；没有表，会进行创建
-type creatuser struct {
-	Id      int64     `xorm:"pk autoincr" json:"id"` //指定主键并自增
-	Username 	string    `json:"username"`
-	FirstName 	string    `json:"firstName"`
-	LastName 	string    `json:"lastName"`
-	Email 		string    `json:"email"`
-	Password 	string    `json:"password"`
-	Phone 		string    `json:"phone"`
-	Roomid		string
-	//StuNum  string    `xorm:"unique" json:"stu_num"`
-	//Name    string    `json:"name"`
-	//Age     int       `json:"age"`
-	//Created time.Time `xorm:"created" json:"created"`
-	//Updated time.Time `xorm:"updated" json:"updated"`
-
-}
-
 //应答体
 type SqlResponse struct {
 	Code    int         `json:"code"`
@@ -53,10 +66,12 @@ type SqlResponse struct {
 	Data    interface{} `json:"data"`
 }
 func init() {
+	session = make(map[string]user)
+	visit = map[int]string{}
 	//1、打开数据库
 	//parseTime:时间格式转换(查询结果为时间时，是否自动解析为时间);
 	// loc=Local：MySQL的时区设置
-	sqlStr := "root:123456@tcp(127.0.0.1:3306)/xorm?charset=utf8&parseTime=true&loc=Local"
+	sqlStr := "root:123456@tcp(127.0.0.1:3306)/xorm?charset=utf8&parseTime=true&loc=Local&multiStatements=true"
 	var err error
 	sqlDb, err = sql.Open("mysql", sqlStr)
 	if err != nil {
@@ -77,6 +92,7 @@ func init() {
 	content, err := ioutil.ReadAll(file)
 	_, err = sqlDb.Exec(string(content))
 	if err != nil {
+		fmt.Println("数据库写入出现了问题：{}", err)
 		return
 	}
 
@@ -122,16 +138,41 @@ func room(c *gin.Context) {
 }
 func enter(c *gin.Context) {
 	roomid := c.Param("roomid")
-	if roomid == "1" {
-		c.String(http.StatusOK, "Enter the Room")
-	}else {
+	fmt.Println(c.Request.Header["Authorization"])
+	token := c.Request.Header["Authorization"][0][7:]
+	fmt.Println(token)
 
+	user := session[token]
+	if user.Id == 0{
 		c.AbortWithStatus(http.StatusBadRequest)
+		return
 	}
+	sqlStr:="update user set roomid=? where id=?"
+	_, err := sqlDb.Exec(sqlStr,roomid, user.Id)
+	if err != nil {
+		c.String(http.StatusBadRequest,"Invalid Room ID")
+		return
+	}
+	user.Roomid = roomid
+
+
+	c.String(http.StatusOK, "Enter the Room")
+
+
 }
 func roomLeave(c *gin.Context) {
-	roomid := "1";
-	if roomid == "1" {
+	token := c.Request.Header["Authorization"][0][7:]
+	user := session[token]
+	if user.Roomid != nil {
+
+		user.Roomid = nil
+		sqlStr:="update user set roomid=? where id=?"
+		_, err := sqlDb.Exec(sqlStr, user.Roomid, user.Id)
+		if err != nil {
+			c.AbortWithStatus(http.StatusBadRequest)
+			fmt.Println(err)
+			return
+		}
 		c.String(http.StatusOK, "Leave the Room")
 	}else {
 
@@ -140,8 +181,20 @@ func roomLeave(c *gin.Context) {
 }
 func roomid(c *gin.Context) {
 	roomid := c.Param("roomid")
-	if roomid == "1" {
-		c.String(http.StatusOK, "response is room name string")
+	sqlStr:="select * from room where id=?"
+
+	name := ""
+	err := sqlDb.QueryRow(sqlStr, roomid).Scan(&roomid,&name)
+	if err!=nil {
+		sqlResponse.Code = http.StatusBadRequest
+		sqlResponse.Message = "查询错误"
+		fmt.Println(err)
+		sqlResponse.Data = "error"
+		c.JSON(http.StatusOK, sqlResponse)
+		return
+	}
+	if name != "" {
+		c.String(http.StatusOK, name)
 	}else {
 
 		c.AbortWithStatus(http.StatusBadRequest)
@@ -149,8 +202,29 @@ func roomid(c *gin.Context) {
 }
 func users(c *gin.Context) {
 	roomid := c.Param("roomid")
-	allUsers := []string{"fwef","hiuiu"}
-	if roomid == "1" {
+	allUsers := list.New()
+	var id int
+	var jkjk interface{}
+	rows, err := sqlDb.Query("select id from user where roomid=?",roomid)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	err = rows.Scan(&jkjk)
+	fmt.Println(jkjk)
+
+	for rows.Next() {
+		err := rows.Scan(&id)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		fmt.Println(id)
+		allUsers.PushBack(id)
+	}
+	defer rows.Close()
+	fmt.Println(allUsers)
+	if allUsers.Len()>0 {
 		c.JSON(http.StatusOK, allUsers)
 	}else {
 
@@ -175,7 +249,8 @@ func roomList(c *gin.Context) {
 		c.AbortWithStatus(http.StatusBadRequest)
 	}
 }
-func user(c *gin.Context) {
+
+func create_user(c *gin.Context) {
 	json := make(map[string]string) //注意该结构接受的内容
 	err := c.BindJSON(&json)
 	if err != nil {
@@ -189,14 +264,49 @@ func user(c *gin.Context) {
 	password := json["password"]
 	phone := json["phone"]
 	log.Printf("%s",username+firstName+lastName+email+password+phone)
+	sqlStr := "insert into user(username,fristname,lastname,email,password,phone) values (?,?,?,?,?,?)"
+	_, err = sqlDb.Exec(sqlStr, username, firstName, lastName, email, password, phone)
+	if err != nil{
+		fmt.Printf("insert failed, err:%v\n", err)
+		sqlResponse.Code = http.StatusBadRequest
+		sqlResponse.Message = "写入失败"
+		sqlResponse.Data = err
+		c.JSON(http.StatusBadRequest, sqlResponse)
+		return
+	}
+	//id, err := ret.LastInsertId()
+
 	c.AbortWithStatus(http.StatusOK)
 }
 func userLogin(c *gin.Context) {
 	username := c.Query("username")
 	password := c.Query("password")
-	log.Printf("%s",username+password)
 
-	c.String(http.StatusOK, uuid.New())
+	sqlStr:="select * from user where username=? and password=?"
+	var u user
+	err := sqlDb.QueryRow(sqlStr, username,password).Scan(&u.Id,&u.Username,&u.FirstName,&u.LastName,&u.Email,&u.Password,&u.Phone,&u.Roomid)
+	if err!=nil {
+		sqlResponse.Code = http.StatusBadRequest
+		sqlResponse.Message = "查询错误"
+		fmt.Println(err)
+		sqlResponse.Data = "error"
+		c.JSON(http.StatusOK, sqlResponse)
+		return
+	}
+	//count||
+
+	s := uuid.New()
+
+	token := visit[u.Id]
+	fmt.Println(token)
+	if token=="" {
+		session[s] = u
+		visit[u.Id] = s
+		fmt.Println(session)
+		c.String(http.StatusOK, s)
+		return
+	}
+	c.String(http.StatusOK, token)
 }
 func username(c *gin.Context) {
 	username  := c.Param("username")
@@ -209,6 +319,7 @@ func username(c *gin.Context) {
 	})
 }
 func send(c *gin.Context) {
+
 	json := make(map[string]string) //注意该结构接受的内容
 	err := c.BindJSON(&json)
 	if err != nil {
@@ -216,6 +327,19 @@ func send(c *gin.Context) {
 	}
 	id := json["id"]
 	text := json["text"]
+
+	t := time.Now().Unix()
+
+	sqlStr := "insert into time(id,text,time) values (?,?,?)"
+	_, err = sqlDb.Exec(sqlStr, id, text, t)
+	if err != nil{
+		fmt.Printf("insert failed, err:%v\n", err)
+		sqlResponse.Code = http.StatusBadRequest
+		sqlResponse.Message = "写入失败"
+		sqlResponse.Data = err
+		c.JSON(http.StatusOK, sqlResponse)
+		return
+	}
 	log.Printf("%s",id + text)
 }
 func retrieve(c *gin.Context) {
@@ -243,9 +367,9 @@ func main() {
 	r.GET("/room/:roomid", roomid)
 	r.GET("/room/:roomid/users", users)
 	r.POST("/roomList", roomList)
-	r.POST("/user", user)
+	r.POST("/user", create_user)
 	r.GET("/userLogin", userLogin)
-	r.GET("/user/:sername", username)
+	r.GET("/create_user/:sername", username)
 	r.POST("/message/send", send)
 	r.POST("/message/retrieve", retrieve)
 	r.GET("/swagger/*any", gs.WrapHandler(swaggerFiles.Handler))
